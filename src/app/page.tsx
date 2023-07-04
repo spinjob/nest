@@ -1,12 +1,16 @@
 
 //There is a new feature from React's SSR to recognize whether a component is client-side or server-side
 'use client';
-import {useState, useEffect, forwardRef} from 'react'
-import {Text, Select, Group, Avatar, Divider, Modal, Notification, Loader, Center, Card} from '@mantine/core'
-import axios from 'axios'
-import { useRouter } from 'next/router'
+import {useState, useEffect, forwardRef} from 'react';
+import {Text, Select, Group, Avatar, Divider, Modal, Accordion, Notification, Loader, Center, Card} from '@mantine/core';
+import axios from 'axios';
+import { useRouter } from 'next/router';
+import { v4 as uuidv4 } from 'uuid';
 
 import EmployeeTable from './components/EmployeeTable'
+import { error } from 'console';
+
+// Interfaces to be used in components
 
 interface ItemProps extends React.ComponentPropsWithoutRef<'div'> {
   image: string;
@@ -48,8 +52,39 @@ interface IndividualDetail {
     } | null;
   gender: string | null;
   dob: string | null;
-
+  ethnicity: string | null;
+  ssn: string | null;
 }
+
+interface Error { 
+  id: string;
+  message: string;
+}
+
+interface DepartmentType {
+  name: string;
+  parent: null | { name: string };
+  children?: DepartmentType[];
+}
+
+const departments: DepartmentType[] = [
+  { "name": "West Coast", "parent": null },
+  { "name": "East Coast", "parent": null },
+  { "name": "Product", "parent": { "name": "West Coast" } },
+  { "name": "Support", "parent": { "name": "East Coast" } },
+  { "name": "GTM", "parent": { "name": "West Coast" } },
+];
+
+const Department: React.FC<{ department: DepartmentType, children?: React.ReactNode }> = ({ department, children }) => (
+  <li>
+    <Text style={{color:'black'}}>
+      {department.name}
+    </Text>
+    <Text style={{color:'black', paddingLeft: 30}}>
+        {children && <ul>{children}</ul>}
+    </Text>
+  </li>
+);
 
 const SelectItem = forwardRef<HTMLDivElement, ItemProps>(
   ({ image, value, label, ...others }: ItemProps, ref) => (
@@ -69,7 +104,8 @@ SelectItem.displayName = "SelectItem"
 function Home() {
 
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [companyDetailsLoading, setCompanyDetailsLoading] = useState(false)
+  const [directoryLoading, setDirectoryLoading] = useState(false)
   const [sandboxProviders, setSandboxProviders] = useState<any[]>([
     {
       value:'gusto',
@@ -92,12 +128,47 @@ function Home() {
       label: 'Workday'
     }
   ])
+
   const [providerCompany, setProviderCompany] = useState<ProviderCompany | null >(null)
   const [providerDirectory, setProviderDirectory] = useState<any | null>(null)
   const [selectedEmployee, setSelectedEmployee] = useState<IndividualDetail | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [errors, setErrors] = useState<Error[] | null>(null)
   const [showModal, setShowModal] = useState(false)
 
+  const addError = async (newError: Error) => {
+    let updatedErrors : Error[] | null = errors;
+
+    if(!updatedErrors) {
+      updatedErrors = [newError];
+    } else {
+      updatedErrors.push(newError);
+    }
+
+    let result = await setErrors(updatedErrors)
+
+    return result;
+  }
+
+  const removeError = async (errorId: string) => {
+    let updatedErrors : Error[] | null = errors;
+
+    if(!updatedErrors) {
+      return null
+    } else {
+      updatedErrors = updatedErrors.filter(function(error: Error){
+        if(error.id === errorId){
+          return false
+        } else {
+          return true
+        }
+      })
+
+      setErrors(updatedErrors);
+
+    }
+
+    return true 
+  }
 
   const fetchProviderToken = async (providerId: string) => {
     // Check if provider token has already been fetched
@@ -137,7 +208,7 @@ function Home() {
 
   const fetchProviderCompany = async (providerToken: string) => {
     
-    setLoading(true)
+    setCompanyDetailsLoading(true)
 
     await axios({
       method: 'GET',
@@ -163,25 +234,33 @@ function Home() {
           locations: company.locations ? company.locations : null
         }
         setProviderCompany(providerCompany)
-        setLoading(false)
+        setCompanyDetailsLoading(false)
         return providerCompany
       }
     }).catch((err) => {
-      console.log(err)
-      setLoading(false)
+      setCompanyDetailsLoading(false)
       if(err.response && err.response.data && err.response.data.message) {
         if (err.response.data.message == "Not Implemented") {
-          setError("This provider does not support the Company API")
+          addError({
+            id: uuidv4(),
+            message: "This provider does not support the Company API"
+          })
           setProviderCompany(null)
         }
       } else {
-        setError("Error fetching provider company")
+        addError({
+          id: uuidv4(),
+          message: "Error fetching provider company"
+        })
       }
       return null
     })
   }
 
   const fetchProviderDirectory = async (providerToken: string) => {
+
+    setDirectoryLoading(true);
+
     await axios({
       method: 'GET',
       url: '/api/employer/directory',
@@ -191,6 +270,7 @@ function Home() {
     }).then((res) => {
       if(res.data){
         let employeeArray = res.data.individuals ? res.data.individuals : []
+
         let tableData = employeeArray.map((employee: any) => {
           return {
             id: employee.id,
@@ -200,26 +280,30 @@ function Home() {
             last_name: employee.last_name ? employee.last_name : null,
             middle_name: employee.middle_name ? employee.middle_name : null,
             department: employee.department.name ? employee.department.name : null,
+            manager: employee.manager && employeeArray.filter((element : any)=>{
+              return element?.id == employee.manager?.id
+            }) ? (employeeArray.filter((element : any)=>{
+              return element?.id == employee.manager?.id
+            })[0].first_name +" " + employeeArray.filter((element : any)=>{
+              return element?.id == employee.manager?.id
+            })[0].last_name ) : null,
             is_active: employee.is_active ? employee.is_active : null,
           }
         })
-        setProviderDirectory(tableData)
+        console.log(tableData)
+        setProviderDirectory(tableData);
+        setDirectoryLoading(false);
       }
-      setError(null)
     }).catch((err) => {
-      console.log(err)
-      setError("Error fetching provider directory")
+      setDirectoryLoading(false);
+      addError({
+        id: uuidv4(),
+        message: "Error fetching provider directory."
+      })
     })
   }
 
   const fetchEmployeeDetails = async (providerToken: string, employeeId: string) => {
-
-    console.log("Provider Token")
-    console.log(providerToken)
-
-    console.log("Employee Id")
-    console.log(employeeId)
-
       await axios({
         method: 'POST',
         url: '/api/employer/individual',
@@ -255,18 +339,20 @@ function Home() {
               country: employeeData.residence.country ? employeeData.residence.country : null,
             } : null,
             dob: employeeData.dob ? employeeData.dob : null,
-            gender: employeeData.gender ? employeeData.gender : null
+            gender: employeeData.gender ? employeeData.gender : null,
+            ethnicity: employeeData.ethnicity ? employeeData.ethnicity : null,
+            ssn: employeeData.ssn ? employeeData.ssn : null,
           }
-            console.log("Employee")
-            console.log(employee)
 
             setSelectedEmployee(employee)
             return employee
           }
 
       }).catch((err) => {
-        console.log(err)
-        setError("Error fetching employee details")
+        addError({
+          id: uuidv4(),
+          message:"Error fetching employee details."
+        });
       })
 
 
@@ -279,7 +365,10 @@ function Home() {
       const providerCompany = await fetchProviderCompany(token)
       const providerDirectory = await fetchProviderDirectory(token)
     } else {
-       setError("Error fetching provider token")
+       addError({
+        id: uuidv4(),
+        message: "Error fetching provider token"
+       })
     }
   }
 
@@ -295,37 +384,255 @@ function Home() {
       }
 
     } else {
-      setError("Error fetching employee details")
+      addError({
+        id: uuidv4(),
+        message: "Error fetching employee details!"
+      })
     }
 
   }
 
+
+  const renderParentDepartments = () => {
+    //If this tree was to require dynamic data, we could store it in state.
+
+    if(providerCompany){
+      let departments = providerCompany.departments;
+      let departmentTree: DepartmentType[] = [];
+      let childrenMap: Record<string, DepartmentType[]> = {};
+
+      departments?.forEach((department) => {
+        if(department.parent == null){
+          departmentTree.push({...department, children:[]});
+        } else {
+          if(!childrenMap[department.parent.name]){
+            childrenMap[department.parent.name] = [];
+          }
+          childrenMap[department.parent.name].push(department);
+        }
+      })
+
+      const mapChildren = (department: DepartmentType): DepartmentType => {
+        if (childrenMap[department.name]) {
+          department.children = childrenMap[department.name].map(mapChildren);
+        }
+        return department;
+      };
+
+      departmentTree = departmentTree.map(mapChildren);
+
+      return renderDepartmentsTree(departmentTree);
+
+    } else {
+      return null
+    }
+  
+  }
+
+  const renderDepartmentsTree = (nodes: DepartmentType[]) => nodes.map((node) => (
+    <Department key={node.name} department={node}>
+      {node.children && renderDepartmentsTree(node.children)}
+    </Department>
+  ));
+
   return (
     <div style={{padding: 20, display: 'flex', flexDirection: 'column', justifyContent: 'center', width: '100vw'}}>
+      <>
+        {
+          errors ? (
+            errors.map((error)=> {
+              return (
+                <div key={error.id}>
+                  <Notification key={error.id} color={'red'} onClose={()=>{
+                    removeError(error.id)
+                  }} title="Error">
+                      {error.message}
+                  </Notification>
+                  <div style={{height: 20}}/>
+                </div>
+              )
+            })
+          ) : null
+        }
+      </>
+      
       {
         showModal ? (
-          <Modal opened={showModal} onClose={() => {
+          <Modal size={'lg'} title={
+            <Text style={{fontWeight: 'bold', fontSize: '20px'}}>
+              Individual Employee Details
+            </Text>
+          } opened={showModal} onClose={() => {
             setShowModal(false)
           }}>
             <div>
-              <Text>
-                Individual Employee
-              </Text>
-              <div style={{paddingTop: 20}}>
-                <Text>
-                  {selectedEmployee?.first_name} {selectedEmployee?.last_name}
+              <div style={{paddingTop: 20, paddingBottom: 20}}>
+                <Text style={{fontWeight: 'bold'}}>
+                  Identification
                 </Text>
-                
+                <div >
+                  <Text>
+                    First Name: {selectedEmployee?.first_name ? selectedEmployee?.first_name : 'Not available from selected provider'}
+                  </Text>
+                  <Text>
+                    Middle Name: {selectedEmployee?.middle_name ? selectedEmployee?.middle_name : 'Not available from selected provider'}
+                  </Text>
+                  <Text>
+                    Last Name: {selectedEmployee?.last_name ? selectedEmployee?.last_name : 'Not available from selected provider'}
+                  </Text>
+                  {
+                    selectedEmployee?.preferred_name ? (
+                      <Text>
+                        Preferred Name: {selectedEmployee.preferred_name}
+                      </Text>
+                    ) : null
+                  }
+                  <Text>
+                    Date of Birth: {selectedEmployee?.dob ? selectedEmployee?.dob : 'Not available from selected provider'}
+                  </Text>
+                  <Text>
+                    Gender: {selectedEmployee?.gender ? selectedEmployee?.gender : 'Not available from selected provider'}
+                  </Text>
+                  <Text>
+                    Ethnicity: {selectedEmployee?.ethnicity ? selectedEmployee?.ethnicity : 'Not available from selected provider'}
+                  </Text>
+                  <Text>
+                    SSN: {selectedEmployee?.ssn ? selectedEmployee?.ssn : 'Not available from selected provider'}
+                  </Text>
                 </div>
+              </div>
+              <div style={{paddingTop: 20, paddingBottom: 20}}>
+                <Text style={{fontWeight: 'bold'}}>
+                  Contact Information
+                </Text>
+                {
+                  selectedEmployee?.emails && selectedEmployee?.emails.length > 0 ? (
+                    selectedEmployee?.emails.map((email) => {
+                      return (
+                        <div key={email.data} style={{paddingTop: 10, paddingBottom:10}}>
+                          <Card style={{border: '1px solid grey', padding: 30}}>
+                            <Card.Section>
+                              <Text>
+                                Email: {email.data}
+                              </Text>
+                              <Text>
+                                Type: {email.type}
+                              </Text>
+                            </Card.Section>
+                          </Card>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <Text>
+                      No Emails available
+                    </Text>
+                  )
+                }
+                {
+                  selectedEmployee?.phone_numbers && selectedEmployee?.phone_numbers.length > 0 ? (
+                    selectedEmployee?.phone_numbers.map((number) => {
+                      return (
+                        <div key={number.data} style={{paddingTop: 10, paddingBottom:10}}>
+                          <Card style={{border: '1px solid grey', padding: 30}}>
+                            <Card.Section>
+                              <Text>
+                                Phone Number: {number.data}
+                              </Text>
+                              <Text>
+                                Type: {number.type}
+                              </Text>
+                            </Card.Section>
+                          </Card>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <Text>
+                      No Emails available
+                    </Text>
+                  )
+                }
+              </div>
+              <div style={{paddingTop: 20, paddingBottom: 20}}>
+                <Text style={{fontWeight: 'bold'}}>
+                  Address
+                </Text>
+            
+                {
+                   selectedEmployee?.residence ? (
+                      <div>
+                        <Card style={{border: '1px solid grey', padding: 30}}>
+                          <Card.Section>
+                              {
+                                selectedEmployee.residence?.line1 && selectedEmployee.residence.line2 ? (
+                                  <Text>
+                                  Street: {selectedEmployee.residence.line1} {selectedEmployee.residence.line2} 
+                                  </Text>
+                                ) : selectedEmployee.residence.line1 && !selectedEmployee.residence.line2 ? (
+                                  <Text>
+                                    Street: {selectedEmployee.residence.line1}
+                                  </Text>
+                                ) : (
+                                  <Text>
+                                    Street: Not available from {selectedProvider}.
+                                  </Text>
+                                )
+                              }
+
+                              {
+                                selectedEmployee.residence.city ? (
+                                  <Text>
+                                    City: {selectedEmployee.residence.city}
+                                  </Text>
+                                ) : (
+                                  <Text>
+                                    City: Not available from {selectedProvider}.
+                                  </Text>
+                                )
+                              }
+
+                              {
+                                selectedEmployee.residence.state ? (
+                                  <Text>
+                                    State: {selectedEmployee.residence.state}
+                                  </Text>
+                                ) : null
+                              }
+                                {
+                                selectedEmployee.residence.country ? (
+                                  <Text>
+                                    Country: {selectedEmployee.residence.country}
+                                  </Text>
+                                ) : (
+                                  <Text>
+                                    Country: Not available from {selectedProvider}.
+                                  </Text>
+                                )
+                              }
+                              {
+                                selectedEmployee.residence.postal_code ? (
+                                  <Text>
+                                    Postal Code: {selectedEmployee.residence.postal_code}
+                                  </Text>
+                                ) : (
+                                  <Text>
+                                    Postal Code: Not available from {selectedProvider}.
+                                  </Text>
+                                )
+                              }
+                          </Card.Section>
+                        </Card>
+                      </div>
+                   ) : (
+                      <Text>
+                        No residence available from selected provider.
+                      </Text>
+                   ) 
+                }
+              </div>
             </div>
           </Modal>
-        ) : null
-      }
-      {
-        error ? (
-          <Notification color="red">
-            {error}
-          </Notification>
         ) : null
       }
       <div style={{display: 'flex', flexDirection: 'column', justifyContent: 'center', width: '50%'}}>
@@ -344,49 +651,251 @@ function Home() {
       </div>
       <div style={{paddingTop: 20, width: '50%'}}>
         {
-          selectedProvider && providerCompany && !loading ? (
+          selectedProvider && providerCompany && !companyDetailsLoading ? (
               <div>
                 <Text sx={{fontSize: '20px', fontWeight: 'bold'}}>
                   Company Details
                 </Text>
-                <Card>
-                  <Card.Section style={{padding: 20}}>
-                    <Text style={{fontSize: '20px', fontWeight: 'medium'}}>
-                      General
-                    </Text>
-                    <Divider/>
-                    <Text>
-                      Legal Name: {providerCompany?.legal_name ? providerCompany?.legal_name : "Not available for this provider."}
-                    </Text>
-                    <Text>
-                      EIN: {providerCompany?.ein ? providerCompany?.ein : "Not available for this provider."}
-                    </Text>
-                    <Text>
-                      Primary Email: {providerCompany?.primary_email ? providerCompany?.primary_email : "Not available for this provider."}
-                    </Text>
-                    <Text>
-                      Phone Number: {providerCompany?.primary_phone_number ? providerCompany?.primary_phone_number : "Not available for this provider."}
-                    </Text>
-                  </Card.Section>
+                <div style={{height: 20}}/>
+                <Accordion defaultValue="general" variant="separated">
+                  <Accordion.Item value="general">
+                    <Accordion.Control>
+                        <Text style={{fontSize: '20px', fontWeight: 'medium'}}>
+                          General
+                        </Text>
+                    </Accordion.Control>
+                    <Accordion.Panel>
+                      <div style={{padding: 10}}>
+                        <Text style={{color:"black"}}>
+                          Legal Name: {providerCompany?.legal_name ? providerCompany?.legal_name : "Not available for this provider."}
+                        </Text>
+                        <Text style={{color:"black"}}>
+                          EIN: {providerCompany?.ein ? providerCompany?.ein : "Not available for this provider."}
+                        </Text>
+                        <Text style={{color:"black"}}>
+                          Primary Email: {providerCompany?.primary_email ? providerCompany?.primary_email : "Not available for this provider."}
+                        </Text>
+                        <Text style={{color:"black"}}>
+                          Phone Number: {providerCompany?.primary_phone_number ? providerCompany?.primary_phone_number : "Not available for this provider."}
+                        </Text>
+                      </div>
+                     
+                    </Accordion.Panel>
+                  </Accordion.Item>             
                   {
                     providerCompany?.entity ? (
-                      <Card.Section style={{padding: 20, paddingTop: 10}}>
-                          <Text style={{fontSize: '20px', fontWeight: 'medium'}}>
-                            Entity Type
-                          </Text>
-                          <Divider/>
-                          <Text>
-                            Type: {providerCompany?.entity?.type ? providerCompany?.entity?.type : "Not available for this provider."}
-                          </Text>
-                          <Text>
-                            Subtype: {providerCompany?.entity?.subtype ? providerCompany?.entity?.subtype : "Not available for this provider."}
-                          </Text>
-                      </Card.Section>
+                      <Accordion.Item value="entity">
+                        <Accordion.Control>
+                            <Text style={{fontSize: '20px', fontWeight: 'medium'}}>
+                              Entity Type
+                            </Text>
+                        </Accordion.Control>
+                        <Accordion.Panel>
+                          <div style={{padding: 10}}>
+                              <Text style={{color:"black"}}>
+                                Type: {providerCompany?.entity?.type ? providerCompany?.entity?.type : "Not available for this provider."}
+                              </Text>
+                              <Text style={{color:"black"}}>
+                                Subtype: {providerCompany?.entity?.subtype ? providerCompany?.entity?.subtype : "Not available for this provider."}
+                              </Text>
+                          </div>
+                        </Accordion.Panel>
+                      </Accordion.Item>
                     ) : null
                   }
-                </Card>
+                  {
+                    providerCompany?.departments && providerCompany.departments.length > 0 ? (
+                      <Accordion.Item value="departments">
+                      <Accordion.Control>
+                          <Text style={{fontSize: '20px', fontWeight: 'medium'}}>
+                            Departments
+                          </Text>
+                      </Accordion.Control>
+                      <Accordion.Panel>
+                        <div style={{paddingLeft: 10, paddingBottom: 10}}>
+                          {renderParentDepartments()}
+                        </div>
+                      </Accordion.Panel>
+                    </Accordion.Item>
+                    ): null
+                  }
+
+                  {
+                    providerCompany?.locations && providerCompany.locations.length > 0 ? (
+                      <Accordion.Item value="locations">
+                      <Accordion.Control>
+                          <Text style={{fontSize: '20px', fontWeight: 'medium'}}>
+                            Locations
+                          </Text>
+                      </Accordion.Control>
+                      <Accordion.Panel>
+                        <div style={{padding: 10}}>
+                          {providerCompany.locations.map((location) => {
+                            return (
+                              <>
+                                <Card style={{border: '1px solid grey', padding: 30}}>
+                                  <Card.Section>
+
+                                      {
+                                        location.line1 && location.line2 ? (
+                                          <Text>
+                                          Street: {location.line1} {location.line2} 
+                                          </Text>
+                                        ) : location.line1 && !location.line2 ? (
+                                          <Text>
+                                            Street: {location.line1}
+                                          </Text>
+                                        ) : (
+                                          <Text>
+                                            Street: Not available from {selectedProvider}.
+                                          </Text>
+                                        )
+                                      }
+
+                                      {
+                                        location.city ? (
+                                          <Text>
+                                            City: {location.city}
+                                          </Text>
+                                        ) : (
+                                          <Text>
+                                            City: Not available from {selectedProvider}.
+                                          </Text>
+                                        )
+                                      }
+
+                                      {
+                                        location.state ? (
+                                          <Text>
+                                            State: {location.state}
+                                          </Text>
+                                        ) : null
+                                      }
+                                       {
+                                        location.country ? (
+                                          <Text>
+                                            Country: {location.country}
+                                          </Text>
+                                        ) : (
+                                          <Text>
+                                            Country: Not available from {selectedProvider}.
+                                          </Text>
+                                        )
+                                      }
+                                      {
+                                        location.postal_code ? (
+                                          <Text>
+                                            Postal Code: {location.postal_code}
+                                          </Text>
+                                        ) : (
+                                          <Text>
+                                            Postal Code: Not available from {selectedProvider}.
+                                          </Text>
+                                        )
+                                      }
+
+                                  </Card.Section>
+                                </Card>
+                                <div style={{height: 10}}/>
+                              </>
+                              
+                            )
+                          })}
+                        </div>
+                       
+                      </Accordion.Panel>
+                    </Accordion.Item>
+                    ) : null
+                  }
+
+                {
+                    providerCompany?.accounts && providerCompany.accounts.length > 0 ? (
+                      <Accordion.Item value="accounts">
+                      <Accordion.Control>
+                          <Text style={{fontSize: '20px', fontWeight: 'medium'}}>
+                            Accounts
+                          </Text>
+                      </Accordion.Control>
+                      <Accordion.Panel>
+                        <div style={{padding: 10}}>
+                          {providerCompany.accounts.map((account) => {
+                            return (
+                              <>
+                                <Card style={{border: '1px solid grey', padding: 30}}>
+                                  <Card.Section>
+                                    {
+                                      account.institution_name ? (
+                                        <Text>
+                                          Institution: {account.institution_name}
+                                        </Text> 
+                                      ) : (
+                                          <Text>
+                                            Institution: Not available from {selectedProvider}.
+                                          </Text>
+                                        )
+                                    }
+                                    {
+                                      account.account_name ? (
+                                        <Text>
+                                          Account Name: {account.account_name}
+                                        </Text> 
+                                      ) : (
+                                        <Text>
+                                          Account Name: Not available from {selectedProvider}.
+                                        </Text>
+                                      )
+                                    }
+                                     {
+                                      account.account_name ? (
+                                        <Text>
+                                          Account Type: {account.account_type}
+                                        </Text> 
+                                      ) : (
+                                        <Text>
+                                          Account Type: Not available from {selectedProvider}.
+                                        </Text>
+                                      )
+                                    }
+                                    {
+                                      account.account_number ? (
+                                        <Text>
+                                          Account Number: {account.account_number}
+                                        </Text> 
+                                      ) : (
+                                        <Text>
+                                          Account Number: Not available from {selectedProvider}.
+                                        </Text>
+                                      )
+                                    }
+                                    {
+                                      account.routing_number ? (
+                                        <Text>
+                                          Routing Number: {account.routing_number}
+                                        </Text> 
+                                      ) : (
+                                        <Text>
+                                          Routing Number: Not available from {selectedProvider}.
+                                        </Text>
+                                      )
+                                    }
+                                  </Card.Section>
+                                </Card>
+                                <div style={{height: 10}}/>
+                              </>
+                              
+                            )
+                          })}
+                        </div>
+                       
+                      </Accordion.Panel>
+                    </Accordion.Item>
+                    ) : null
+                  }
+
+                </Accordion>
+
               </div>
-          ) : loading ? (
+          ) : companyDetailsLoading ? (
               <Center>
                 <Loader/>
               </Center>
@@ -395,14 +904,14 @@ function Home() {
       </div>
       <div style={{paddingTop: 20, width: '100%'}}>
           {
-            selectedProvider && providerDirectory ? (
+            selectedProvider && providerDirectory && !directoryLoading ? (
                 <div>
                   <Text sx={{fontSize: '20px', fontWeight: 'bold'}}>
                     Employee Directory
                   </Text>
                   <EmployeeTable data={providerDirectory} selectEmployee={selectEmployee}/>
                 </div>
-            ) : loading ? (
+            ) : directoryLoading ? (
                 <Center>
                   <Loader/>
                 </Center>

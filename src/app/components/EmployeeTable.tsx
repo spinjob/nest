@@ -39,6 +39,7 @@ interface RowData {
   last_name: string;
   department: string;
   is_active: string;
+  manager: string;
   value: string;
 }
 
@@ -133,12 +134,15 @@ function EmployeeTable({ data, selectEmployee }: TableSortProps) {
       <td data-id={row.id}>{
         <Text style={{fontSize:'15px', color:'black'}}>{row.is_active ? "Active" : "Inactive"}</Text>
       }</td>
+      <td data-id={row.id}>{
+        <Text style={{fontSize:'15px', color:'black'}}>{row.manager ? row.manager : "None"}</Text>
+      }</td>
     </tr>
   ));
 
   return (
     <ScrollArea>
-      <div style={{height: 30}}/>
+      <div style={{height: 20}}/>
       <Table
         verticalSpacing="xs"
         highlightOnHover={true}
@@ -174,6 +178,13 @@ function EmployeeTable({ data, selectEmployee }: TableSortProps) {
               onSort={() => setSorting('is_active')}
             >
                <Text style={{fontSize:'15px', color:'black'}}>Status</Text>
+            </Th>
+            <Th
+              sorted={sortBy === 'manager'}
+              reversed={reverseSortDirection}
+              onSort={() => setSorting('manager')}
+            >
+               <Text style={{fontSize:'15px', color:'black'}}>Manager</Text>
             </Th>
           </tr>
         </thead>
